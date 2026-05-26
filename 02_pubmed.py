@@ -81,18 +81,30 @@ def extract_pmc_id(xml_text):
 
 # [유틸] PMC PDF 다운로드
 def download_pmc_pdf(pmc_id, dirpath, pmid):
-    pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/"
-    headers = {"User-Agent": "Mozilla/5.0"}  # 봇 차단 우회
-    response = requests.get(pdf_url, headers=headers, allow_redirects=True)
+    # 1. OA API로 Open Access 여부 확인
+    oa_url = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi"
+    r = requests.get(oa_url, params={"id": pmc_id}, timeout=15)
 
-    if response.status_code == 200 and b"%PDF" in response.content[:10]:
-        pdf_path = f"{dirpath}/{pmid}.pdf"
-        with open(pdf_path, "wb") as f:
-            f.write(response.content)
-        print(f"[PDF 다운로드 성공] {pmid}.pdf | PMC ID: {pmc_id}")
-    else:
-        print(f"[PDF 다운로드 실패] PMID: {pmid} | 상태코드: {response.status_code}")
+    # tgz 링크가 없으면 구독 논문 → 다운로드 불가
+    if "href=" not in r.text:
+        print(f"[실패] PMID: {pmid} | 구독 논문 (OA 아님)")
+        return False
 
+    # 2. AWS S3에서 PDF 직접 다운로드 (버전 1~3 순서로 시도)
+    for v in ["1", "2", "3"]:
+        s3_url = f"https://pmc-oa-opendata.s3.amazonaws.com/{pmc_id}.{v}/{pmc_id}.{v}.pdf"
+        res = requests.get(s3_url, timeout=60)
+
+        if res.status_code == 200 and b"%PDF" in res.content[:10]:
+            pdf_path = f"{dirpath}/{pmid}.pdf"
+            with open(pdf_path, "wb") as f:
+                f.write(res.content)
+            print(f"[성공] {pmid}.pdf | {pmc_id} (v{v})")
+            return True
+
+    print(f"[실패] PMID: {pmid} | S3 PDF 없음")
+    return False
+    
 # 실행 예시
 #single_download_pubmed("perovskite AND synthesis")
 batch_download_pubmed("perovskite AND synthesis")
