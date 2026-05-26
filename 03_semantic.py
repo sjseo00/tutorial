@@ -1,4 +1,5 @@
 import requests, os
+import re
 from semanticscholar import SemanticScholar
 
 # [1] 단건 수집 — 키워드 검색 후 XML 저장 + 오픈액세스 PDF 다운로드
