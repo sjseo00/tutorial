@@ -41,20 +41,68 @@ def batch_download_semantic(keyword, max_results=3):
         else:
             print(f"[PDF 스킵] 오픈액세스 아님 | 제목: {paper.title}")
 
+def resolve_pdf_url(url):
+    """DOI URL을 실제 PDF URL로 변환 시도"""
+    # 1. Unpaywall API로 무료 PDF URL 조회
+    doi_match = re.search(r'10\.\d{4,}/\S+', url)
+    if not doi_match:
+        return None
+    
+    doi = doi_match.group(0)
+    email = "your@email.com"
+    unpaywall_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
+    
+    try:
+        res = requests.get(unpaywall_url, timeout=10).json()
+        if not res.get("is_oa"):
+            print(f"[구독 논문] OA 아님: {doi}")
+            return None
+        
+        # best_oa_location 먼저 확인
+        best = res.get("best_oa_location", {})
+        pdf_url = best.get("url_for_pdf")
+        
+        # ★ best에 pdf URL 없으면 oa_locations 전체에서 탐색
+        if not pdf_url:
+            for loc in res.get("oa_locations", []):
+                if loc.get("url_for_pdf"):
+                    pdf_url = loc["url_for_pdf"]
+                    break
+        
+        if not pdf_url:
+            print(f"[PDF 없음] OA이지만 PDF URL 없음: {doi}")
+            return None
+        
+        return pdf_url
+
+    except Exception as e:
+        print(f"[Unpaywall 실패] {e}")
+        return None
+
 # [유틸] PDF 다운로드
 def download_pdf(pdf_url, dirpath, paper_id):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(pdf_url, headers=headers, allow_redirects=True)
+    if "doi.org" in pdf_url:
+        pdf_url = resolve_pdf_url(pdf_url)
+    print("Converted " + pdf_url)
+    if not pdf_url:
+        print(f"[PDF 스킵] 무료 PDF 없음")
+        return False
 
-    if response.status_code == 200 and b"%PDF" in response.content[:10]:
-        safe_id = paper_id.replace("/", "_")
-        pdf_path = f"{dirpath}/{safe_id}.pdf"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    res = requests.get(pdf_url, headers=headers, allow_redirects=True, timeout=30)
+
+    if res.status_code == 200 and b"%PDF" in res.content[:10]:
+        pdf_path = f"{dirpath}/{paper_id}.pdf"
         with open(pdf_path, "wb") as f:
-            f.write(response.content)
-        print(f"[PDF 다운로드 성공] {safe_id}.pdf")
+            f.write(res.content)
+        print(f"[성공] {paper_id}.pdf")
+        return True
     else:
-        print(f"[PDF 다운로드 실패] 상태코드: {response.status_code} | URL: {pdf_url}")
-
+        print(f"[실패] 상태코드: {res.status_code} | URL: {pdf_url}")
+        return False
+        
 # 실행 예시
 single_download_semantic("perovskite AND synthesis")
 #batch_download_semantic("perovskite AND synthesis")
